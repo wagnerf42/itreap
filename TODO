@@ -1,0 +1,4 @@
+do the 'treap' part
+- retain range
+- remove range
+- re-fuse near empty blocks
