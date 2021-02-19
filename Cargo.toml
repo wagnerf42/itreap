@@ -9,3 +9,4 @@ edition = "2018"
 [dependencies]
 itertools="^0.10"
 replace_with="^0.1.7"
+rand="^0.8"

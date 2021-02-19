@@ -1,5 +1,6 @@
-use super::{Node, BLOCK_SIZE};
+use super::{Node, Priority, BLOCK_SIZE};
 use itertools::Itertools;
+use rand::random;
 use std::ops::Range;
 
 pub struct ITreap<C> {
@@ -30,6 +31,10 @@ impl<C> ITreap<C> {
             root: Node::Leaf(Vec::new()),
         }
     }
+    /// Checks that the data structure respects its constraints.
+    pub(super) fn is_valid(&self) -> bool {
+        self.root.is_valid(None)
+    }
     /// Inserts an element at position `index`.
     /// Cost is O(log(n/B)+B).
     ///
@@ -46,7 +51,7 @@ impl<C> ITreap<C> {
     ///
     /// assert!(t.iter().eq(&[2, 3, 7]))
     /// ```
-    pub fn insert(&mut self, index: usize, element: C) -> &mut C {
+    pub fn insert(&mut self, index: usize, element: C) {
         self.root.insert(index, element)
     }
     /// Adds an element to the back.
@@ -65,7 +70,7 @@ impl<C> ITreap<C> {
     ///
     /// assert!(t.iter().eq(&[2, 4 ,6]))
     /// ```
-    pub fn push(&mut self, element: C) -> &mut C {
+    pub fn push(&mut self, element: C) {
         self.insert(self.len(), element)
     }
     /// Returns the number of elements in the indexed treap.
@@ -102,7 +107,7 @@ impl<C> ITreap<C> {
             while current_block.is_none() && !remaining_nodes.is_empty() {
                 let (next_node, next_node_range) = remaining_nodes.pop().unwrap();
                 match next_node {
-                    Node::Inner(_, [left, right]) => {
+                    Node::Inner(_, _, [left, right]) => {
                         let right_start = next_node_range.start + left.len();
                         let right_range = right_start..next_node_range.end;
                         let left_range = next_node_range.start..right_start;
@@ -150,10 +155,10 @@ impl<C> std::iter::FromIterator<C> for ITreap<C> {
     /// Cost is O(n).
     fn from_iter<T: IntoIterator<Item = C>>(iter: T) -> Self {
         // avoid inserting elements one by one.
-        // loop on all blocks
-        let mut tree = iter.into_iter().chunks(BLOCK_SIZE / 2).into_iter().fold(
-            Vec::new(),
-            |mut tree, chunk| {
+        // spread all elements directly into their final blocks
+        let (mut tree, leaves) = iter.into_iter().chunks(BLOCK_SIZE / 2).into_iter().fold(
+            (Vec::new(), 0),
+            |(mut tree, leaves), chunk| {
                 // we keep a stack of nodes
                 // and merge the last two nodes when the get equal size
                 let block = chunk.collect::<Vec<_>>();
@@ -164,24 +169,48 @@ impl<C> std::iter::FromIterator<C> for ITreap<C> {
                         let right_node = tree.pop().unwrap();
                         let left_node = tree.pop().unwrap();
                         let size = left_node.len() + right_node.len();
-                        let merged = Node::Inner(size, [left_node, right_node]);
+                        // let's have a fake priority, we'll set it later
+                        let merged = Node::Inner(0, size, [left_node, right_node]);
                         tree.push(Box::new(merged));
                     } else {
                         break;
                     }
                 }
-                tree
+                (tree, leaves + 1)
             },
         );
         let right_node = tree.pop();
         if let Some(mut right_node) = right_node {
+            // build the treap
             while let Some(left_node) = tree.pop() {
                 let size = left_node.len() + right_node.len();
-                right_node = Box::new(Node::Inner(size, [left_node, right_node]));
+                right_node = Box::new(Node::Inner(0, size, [left_node, right_node]));
             }
-            ITreap { root: *right_node }
+            let mut treap = ITreap { root: *right_node };
+            // now, fix priorities
+            let mut priorities: Vec<Priority> =
+                std::iter::repeat_with(random).take(leaves - 1).collect();
+            priorities.sort_unstable();
+            for_each_node_breadth_first(&mut treap.root, |node| match node {
+                Node::Inner(priority, _, _) => *priority = priorities.pop().unwrap(),
+                _ => (),
+            });
+
+            debug_assert!(treap.is_valid());
+            treap
         } else {
             Default::default()
+        }
+    }
+}
+
+fn for_each_node_breadth_first<C, F: FnMut(&mut Node<C>)>(root: &mut Node<C>, mut op: F) {
+    let mut remaining: std::collections::VecDeque<_> = std::iter::once(root).collect();
+    while let Some(node) = remaining.pop_front() {
+        op(node);
+        match node {
+            Node::Inner(_, _, children) => remaining.extend(children.iter_mut().map(|b| &mut **b)),
+            _ => (),
         }
     }
 }
